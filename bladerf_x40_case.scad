@@ -97,6 +97,22 @@ sma_hole_d = 11.00;     // finished bore.  Clears the 9.50 block width; the barr
 smb_hole_d = 10.00;
 smb_axis_z = 5.00;
 
+// Bored openings are drawn out into a vertical slot instead of being left as a
+// full circle.  A circle cut through a wall that is vertical on the bed has a
+// horizontal tangent at its widest point: the skin above that point appears out
+// of thin air with nothing under it, so it prints as a sagging, unsupported lip
+// right where the connector shoulder seats.  Straightening the arc at the two
+// vertical tangents removes it - the sides run true vertical, which is the one
+// direction a sideways face always prints cleanly.
+//
+// Only one horizontal tangent can be avoided per half, so the slot keeps the
+// round end on the connector axis (where the barrel actually needs it) and
+// pushes the other end to the parting plane.  That parks the remaining tangent
+// exactly on the split, where neither half has any material above it.  So a
+// connector below the split grows upward, one above it grows downward, and the
+// straight run is only as long as the split demands - see slot_lo/slot_hi.
+slot_bores = true;
+
 /* [Ventilation] */
 vents      = true;
 vent_w     = 3.00;
@@ -135,6 +151,12 @@ engage    = pcb_z0 - tip_z;                             // thread inside the ins
 // SMA block, derived
 sma_axis_z  = (sma_up - sma_down - pcb_t) / 2;          // bore axis above PCB top face
 sma_block_h = sma_up + pcb_t + sma_down;
+
+// Slot end-cap heights for a bored connector: the two circle centres the
+// opening is hulled between.  Equal when slot_bores is off, which collapses the
+// hull back to the original single bore.
+function slot_lo(c) = slot_bores ? min(pcb_zt + c[4], split_z) : pcb_zt + c[4];
+function slot_hi(c) = slot_bores ? max(pcb_zt + c[4], split_z) : pcb_zt + c[4];
 
 // Stepped lip joint, worked out from the outside face inwards
 lip_out    = wall - lip_relief - lip_t;              // lid lip outer face
@@ -225,6 +247,14 @@ module edge_cut_round(edge, p, d, zc, depth) {
         cylinder(d = d, h = depth + 1);
 }
 
+// Vertically slotted bore: the same hole at two heights, hulled.  Two coaxial
+// cylinders hull to the exact stadium prism - semicircular caps joined by walls
+// on the common vertical tangents - so the bore diameter is untouched and only
+// the straight run is new.  zlo == zhi gives the plain circular bore back.
+module edge_cut_slot(edge, p, d, zlo, zhi, depth) {
+    hull() for (z = [zlo, zhi]) edge_cut_round(edge, p, d, z, depth);
+}
+
 module connector_cuts() {
     depth = wall + 4;
     // bored holes: diameter as tabled, no clearance and no outer relief.  These
@@ -232,7 +262,7 @@ module connector_cuts() {
     // reach the floor at the SMA positions.
     for (c = connectors)
         if (c[2] == "round")
-            edge_cut_round(c[0], c[1], c[3], pcb_zt + c[4], depth);
+            edge_cut_slot(c[0], c[1], c[3], slot_lo(c), slot_hi(c), depth);
     // body-fitted slots
     for (c = connectors)
         if (c[2] != "round")
@@ -357,12 +387,18 @@ if (engage < 2.0)
 if (seat_z < pcb_zt + 1)
     echo("WARNING: screw too short, the head recess sinks below the lid boss");
 for (c = connectors)
-    if (c[2] == "round" && pcb_zt + c[4] - c[3]/2 < floor_t)
+    if (c[2] == "round" && slot_lo(c) - c[3]/2 < floor_t)
         echo(str("WARNING: bore ", c[0], " at ", c[1], " reaches z=",
-                 pcb_zt + c[4] - c[3]/2, ", below the floor top at ", floor_t));
+                 slot_lo(c) - c[3]/2, ", below the floor top at ", floor_t));
 for (c = connectors)
-    if (c[2] == "round" && pcb_zt + c[4] + c[3]/2 > total_h - top_t)
+    if (c[2] == "round" && slot_hi(c) + c[3]/2 > total_h - top_t)
         echo(str("WARNING: bore ", c[0], " at ", c[1], " reaches the lid ceiling"));
+for (c = connectors)
+    if (c[2] == "round")
+        echo(str("bore ", c[0], " at ", c[1], ": ", c[3], " dia on axis z=",
+                 pcb_zt + c[4], ", slotted to ", slot_hi(c) - slot_lo(c),
+                 " straight, opening z=", slot_lo(c) - c[3]/2, "..",
+                 slot_hi(c) + c[3]/2));
 
 // ---------------------------------------------------------------------
 // Output
